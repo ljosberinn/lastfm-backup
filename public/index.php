@@ -11,7 +11,7 @@ $backup = new Backup($secrets);
 
 $page                       = isset($_GET['page']) ? (int) $_GET['page'] : 1;
 $timestamp                  = isset($_GET['timestamp']) ? (int) $_GET['timestamp'] : NULL;
-$hasNowPlayingOnStart       = isset($_GET['hasNowPlayingOnStart']);
+$isCurrentlyScrobbling      = isset($_GET['isCurrentlyScrobbling']);
 $collectNowPlayingFromStart = isset($_GET['collectNowPlayingFromStart']);
 
-$backup->savePage($page, $hasNowPlayingOnStart, $timestamp, $collectNowPlayingFromStart);
+$backup->savePage($page, $isCurrentlyScrobbling, $timestamp, $collectNowPlayingFromStart);
