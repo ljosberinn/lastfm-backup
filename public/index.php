@@ -8,10 +8,9 @@ spl_autoload_register(static function(string $className) {
 });
 
 $backup = new Backup($secrets);
-
-$page                       = isset($_GET['page']) ? (int) $_GET['page'] : 1;
-$timestamp                  = isset($_GET['timestamp']) ? (int) $_GET['timestamp'] : NULL;
-$isCurrentlyScrobbling      = isset($_GET['isCurrentlyScrobbling']);
-$collectNowPlayingFromStart = isset($_GET['collectNowPlayingFromStart']);
-
-$backup->savePage($page, $isCurrentlyScrobbling, $timestamp, $collectNowPlayingFromStart);
+$backup->savePage([
+    'page'                  => isset($_GET['page']) ? (int) $_GET['page'] : 1,
+    'timestamp'             => isset($_GET['timestamp']) ? (int) $_GET['timestamp'] : NULL,
+    'isCurrentlyScrobbling' => isset($_GET['isCurrentlyScrobbling']),
+    'collectNowPlaying'     => isset($_GET['collectNowPlaying']),
+]);

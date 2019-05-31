@@ -18,6 +18,10 @@ class Backup {
     private $handle;
     /** @var int $mostRecentScrobble */
     private $mostRecentScrobble;
+    /** @var array $scrobblesPerDayTracker */
+    private $scrobblesPerDayTracker = [];
+    /** @var float $start */
+    private $start;
 
     /**
      * @param array $secrets [the contents of secrets.php]
@@ -30,14 +34,17 @@ class Backup {
     }
 
     /**
-     * @param int      $page                       [the currently iterated page]
-     * @param bool     $isCurrentlyScrobbling      [flag to indicate the user was scrobbling at start]
-     * @param int|NULL $timestamp                  [timestamp to carry over JSON access indirectly]
-     * @param bool     $collectNowPlayingFromStart [flag to indicate the import is done, but user was scrobbling at start]
+     * @param array $params
      *
      * @throws Exception
      */
-    public function savePage(int $page, bool $isCurrentlyScrobbling = false, int $timestamp = NULL, bool $collectNowPlayingFromStart = false): void {
+    public function savePage(array $params): void {
+        $timestamp             = $params['timestamp'];
+        $page                  = $params['page'];
+        $isCurrentlyScrobbling = $params['isCurrentlyScrobbling'];
+        $collectNowPlaying     = $params['collectNowPlaying'];
+
+        $this->start = microtime(true);
         // carry over last known timestamp of the previous page
         if($timestamp !== NULL) {
             User::verifyExistence($this->uriBuilder);
@@ -49,8 +56,8 @@ class Backup {
         $pageURI  = $this->uriBuilder->getRecentTracks($page);
         $response = Crawler::get($pageURI);
 
-        // occasional API hickup
-        if(!isset($response['recenttracks'])) {
+        // occasional API hiccup
+        if(isset($response['error']) || !isset($response['recenttracks'])) {
             sleep(2);
             header('Location: index.php?' . http_build_query($_GET));
         }
@@ -65,16 +72,17 @@ class Backup {
 
             // finish off last JSON
             $this->finishJSON();
-            die('Done.');
+            header('Location: combine.php?user=' .$response['recenttracks']['@attr']['user']);
         }
 
         $isUnfinishedJSON = false;
-        $scrobbleCount    = count($scrobbles);
-        $skippedTracks    = 0;
+
+        $scrobbleCount = count($scrobbles);
 
         foreach($scrobbles as $scrobble) {
             // skip 'nowplaying' tracks
             if(isset($scrobble['@attr'], $scrobble['@attr']['nowplaying'])) {
+                --$scrobbleCount;
                 $isCurrentlyScrobbling = true;
                 continue;
             }
@@ -82,6 +90,12 @@ class Backup {
             $scrobble  = $this->extractScrobbleData($scrobble);
             $timestamp = $scrobble['timestamp'];
             $trackDate = date('Y-m-d', $timestamp);
+
+            if(!isset($this->scrobblesPerDayTracker[$trackDate])) {
+                $this->scrobblesPerDayTracker[$trackDate] = 1;
+            } else {
+                ++$this->scrobblesPerDayTracker[$trackDate];
+            }
 
             $praefix = ',';
 
@@ -105,7 +119,7 @@ class Backup {
             // if mostRecentScrobble is set, we're appending to an existing JSON and can ignore previous scrobbles
             if($this->mostRecentScrobble !== NULL && $timestamp <= $this->mostRecentScrobble) {
                 $isUnfinishedJSON = true;
-                ++$skippedTracks;
+                --$scrobbleCount;
                 continue;
             }
 
@@ -117,13 +131,14 @@ class Backup {
             $this->finishJSON();
         }
 
-        if($collectNowPlayingFromStart || $skippedTracks === $scrobbleCount) {
-            die('Done.');
+        if($collectNowPlaying || $scrobbleCount === 0) {
+            header('Location: combine.php?user=' .$response['recenttracks']['@attr']['user']);
         }
 
         $newParams = [
-            'page'      => $page + 1,
-            'timestamp' => $timestamp,
+            'page'       => $page + 1,
+            'totalPages' => $response['recenttracks']['@attr']['totalPages'],
+            'timestamp'  => $timestamp,
         ];
 
         // carry the flag across all pages
@@ -131,13 +146,79 @@ class Backup {
             $newParams['isCurrentlyScrobbling'] = 1;
         }
 
-        // hack to circumvent Chrome Too Many Redirects warning
-        echo 'Added ' . ($scrobbleCount - $skippedTracks) . ' tracks, next page incoming.
-        <script>
-        setTimeout(() => (location.href = "index.php?' . http_build_query($newParams) . '"), 150);
-        </script>';
+        $this->continue($newParams);
     }
 
+    private function continue(array $newParams): void {
+        $executionTime  = microtime(true) - $this->start;
+        $currentPage    = $newParams['page'] - 1;
+        $remainingPages = $newParams['totalPages'] - $currentPage;
+
+        $percentDone   = round(($currentPage / $newParams['totalPages']) * 100, 2);
+        $remainingTime = round($executionTime * $remainingPages / 60, 2);
+        ?>
+        <style>
+            .has-text-right {
+                text-align: right;
+            }
+
+            .has-text-centered {
+                text-align: center;
+            }
+
+            table {
+                border-collapse: collapse;
+                width: 33%;
+            }
+
+            tr:nth-of-type(even) {
+                background-color: lightgrey;
+            }
+        </style>
+        <table>
+            <thead>
+            <tr>
+                <th>Progress</th>
+                <th>Done in ~ (min)</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr>
+                <td class="has-text-centered"><?= $percentDone ?>%</td>
+                <td class="has-text-centered"><?= $remainingTime ?></td>
+            </tr>
+            </tbody>
+            <thead>
+            <tr>
+                <th>Date</th>
+                <th>Scrobble count</th>
+            </tr>
+            </thead>
+            <tbody>
+            <?php foreach($this->scrobblesPerDayTracker as $date => $scrobbles) { ?>
+                <tr>
+                    <td><?= $date ?></td>
+                    <td class="has-text-right"><?= number_format($scrobbles) ?></td>
+                </tr>
+            <?php } ?>
+            </tbody>
+            <tfoot>
+            <tr>
+                <td><?= count($this->scrobblesPerDayTracker) ?> days</td>
+                <td class="has-text-right"><?= array_sum(array_values($this->scrobblesPerDayTracker)) ?></td>
+            </tr>
+            </tfoot>
+        </table>
+        <!-- hack to circumvent Chrome Too Many Redirects warning -->
+        <script>
+          setTimeout(() => (location.href = "index.php?<?= http_build_query($newParams) ?>"), 150);
+        </script>
+        <?php
+    }
+
+    /**
+     * Ends the current handle, reopens it, sorts it by timestamp ASC and places the new contents back into the file
+     */
     private function finishJSON(): void {
         fwrite($this->handle, ']');
         fclose($this->handle);
@@ -169,21 +250,14 @@ class Backup {
         // or imports as I did, since imported songs show up as having being played on January 1st 1970
         if(file_exists($jsonPath)) {
             $previousContent = file_get_contents($jsonPath);
+            $json            = json_decode($previousContent, true);
 
-            // remove JSON ending [ if it exists
-            // if it doesnt exist, it means we're accessing the JSON for the third time:
-            // 1st time: regular creation
-            // 2nd time: removal of ], appending
-            // 3rd time: no ] existent, file wasn't finished in previous iteration,
-            // thus trackTimestamp still hasn't indicated another day
-            $bracketPos = strpos($previousContent, ']');
-            if($bracketPos !== false) {
-                $json                     = json_decode($previousContent, true);
+            // if contents are valid array, remove array ending to allow appending
+            if($json !== NULL) {
                 $this->mostRecentScrobble = (int) end($json)['timestamp'];
 
                 $handle = fopen($jsonPath, 'wb+');
-
-                fwrite($handle, str_replace(']', '', $previousContent));
+                fwrite($handle, substr($previousContent, 0, -1));
             } else {
                 $handle = fopen($jsonPath, 'ab');
             }
@@ -195,7 +269,7 @@ class Backup {
             return $handle;
         }
 
-        die('Couldn\'t open handle for ' . $jsonPath);
+        die('Couldn\'t create handle for ' . $jsonPath);
     }
 
     /**
