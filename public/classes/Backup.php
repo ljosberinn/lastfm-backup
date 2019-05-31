@@ -149,14 +149,13 @@ class Backup {
                 $handle = fopen($jsonPath, 'wb+');
 
                 fwrite($handle, str_replace(']', '', $previousContent));
-            } else {
-                $handle = fopen($jsonPath, 'ab');
+                return $handle;
             }
-        } else {
-            $handle = fopen($jsonPath, 'wb+');
+
+            return fopen($jsonPath, 'ab');
         }
 
-        return $handle;
+        return fopen($jsonPath, 'wb+');
     }
 
     /**
